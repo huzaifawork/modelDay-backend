@@ -1,5 +1,5 @@
-const OpenAI = require('openai');
-const cors = require('cors');
+import OpenAI from 'openai';
+import cors from 'cors';
 
 // Initialize OpenAI (only if API key is available)
 let openai;
@@ -36,7 +36,7 @@ function runCors(req, res) {
   });
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   // Run CORS
   await runCors(req, res);
 
@@ -61,14 +61,6 @@ module.exports = async function handler(req, res) {
       return res.status(400).json({
         error: 'Message is required',
         code: 'MISSING_MESSAGE'
-      });
-    }
-
-    // Basic input validation for security
-    if (typeof message !== 'string' || message.length > 4000) {
-      return res.status(400).json({
-        error: 'Invalid message format or too long',
-        code: 'INVALID_MESSAGE'
       });
     }
 
