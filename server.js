@@ -12,10 +12,13 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Initialize OpenAI (only if API key is available)
+let openai;
+if (process.env.OPENAI_API_KEY) {
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+}
 
 // Middleware
 app.use(helmet()); // Security headers
@@ -74,7 +77,7 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.OPENAI_API_KEY || !openai) {
       return res.status(500).json({
         error: 'OpenAI API key not configured',
         code: 'MISSING_API_KEY'
@@ -174,12 +177,14 @@ app.use('*', (req, res) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 ModelDay Backend Server running on port ${PORT}`);
-  console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-  console.log(`💬 Chat API: http://localhost:${PORT}/api/chat`);
-});
+// Start server (only in non-serverless environments)
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`🚀 ModelDay Backend Server running on port ${PORT}`);
+    console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+    console.log(`💬 Chat API: http://localhost:${PORT}/api/chat`);
+  });
+}
 
 export default app;
