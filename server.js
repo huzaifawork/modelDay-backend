@@ -61,16 +61,23 @@ app.get('/', (req, res) => {
     status: 'running',
     endpoints: {
       health: '/health',
-      chat: '/api/chat',
-      context: '/api/context'
+      chat: '/api/chat (enhanced with automatic context building)',
+      context: '/api/context (for testing and manual context building)',
+      chatWithContext: '/api/chat-with-context (alternative endpoint)'
+    },
+    features: {
+      contextBuilding: 'Automatic context building from userData',
+      contextLimitations: 'Intelligent fallback when no data available',
+      multipleDataSources: 'userData, context, or conversation embedding',
+      backwardCompatible: 'Works with existing frontend without changes'
     }
   });
 });
 
-// Chat endpoint with OpenAI integration and context limitations
+// Chat endpoint with OpenAI integration and automatic context building
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, conversation = [], userData = null } = req.body;
+    const { message, conversation = [], userData = null, context = null } = req.body;
 
     if (!message) {
       return res.status(400).json({
@@ -86,13 +93,36 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    // Build comprehensive user context using ContextService (similar to Dart version)
+    // Automatically build comprehensive user context using ContextService
     let systemContext;
-    if (userData && Object.keys(userData).length > 0) {
-      // User has provided data - build comprehensive context
+
+    // Priority 1: Use pre-built context if provided
+    if (context && typeof context === 'string' && context.trim().length > 0) {
+      console.log('🔄 Using pre-built context from request');
+      systemContext = context;
+    }
+    // Priority 2: Build context from userData if available
+    else if (userData && Object.keys(userData).length > 0) {
+      console.log('🔄 Building context from userData');
       systemContext = ContextService.buildUserContext(userData);
-    } else {
-      // No user data provided - use basic context with limitations
+    }
+    // Priority 3: Check if userData is embedded in conversation history
+    else if (conversation && conversation.length > 0) {
+      console.log('🔄 Checking conversation for embedded userData');
+      // Look for userData in conversation metadata
+      const contextMessage = conversation.find(msg => msg.userData || msg.context);
+      if (contextMessage) {
+        if (contextMessage.userData) {
+          systemContext = ContextService.buildUserContext(contextMessage.userData);
+        } else if (contextMessage.context) {
+          systemContext = contextMessage.context;
+        }
+      }
+    }
+
+    // Fallback: Use basic context with limitations
+    if (!systemContext) {
+      console.log('🔄 Using fallback context with limitations');
       systemContext = `You are ModelDay AI, a helpful assistant for the ModelDay platform.
 
 IMPORTANT CONTEXT LIMITATIONS:
@@ -148,14 +178,30 @@ Be professional, encouraging, and provide practical general advice while being t
       throw new Error('No response from OpenAI');
     }
 
+    // Determine context status for response
+    const hasUserData = (userData && Object.keys(userData).length > 0) ||
+                       (context && context.includes('USER PROFILE:')) ||
+                       (conversation && conversation.some(msg => msg.userData || (msg.context && msg.context.includes('USER PROFILE:'))));
+
+    const contextLimited = !hasUserData;
+
     res.json({
       success: true,
       response: aiResponse,
       usage: completion.usage,
       model: completion.model,
       timestamp: new Date().toISOString(),
-      hasUserData: userData && Object.keys(userData).length > 0,
-      contextLimited: !userData || Object.keys(userData).length === 0
+      hasUserData: hasUserData,
+      contextLimited: contextLimited,
+      contextSource: context ? 'pre-built' :
+                    (userData ? 'userData' :
+                    (conversation.some(msg => msg.userData || msg.context) ? 'conversation' : 'fallback')),
+      // Helper for frontend to understand how to send data
+      dataFormat: {
+        userData: "Send user data in 'userData' field",
+        context: "Send pre-built context in 'context' field",
+        conversation: "Embed userData/context in conversation messages"
+      }
     });
 
   } catch (error) {
@@ -219,6 +265,12 @@ app.post('/api/context', async (req, res) => {
         meetings: userData.meetings?.length || 0,
         onStays: userData.onStays?.length || 0,
         shootings: userData.shootings?.length || 0
+      },
+      // Instructions for using with /api/chat
+      usage: {
+        method1: "Send this context in 'context' field to /api/chat",
+        method2: "Send original userData in 'userData' field to /api/chat",
+        method3: "Embed userData in conversation message metadata"
       }
     });
 
@@ -227,6 +279,51 @@ app.post('/api/context', async (req, res) => {
     res.status(500).json({
       error: 'Internal server error',
       code: 'CONTEXT_ERROR',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+    });
+  }
+});
+
+// Helper endpoint: Build context and chat in one call (alternative to separate calls)
+app.post('/api/chat-with-context', async (req, res) => {
+  try {
+    const { message, conversation = [], userData } = req.body;
+
+    if (!message) {
+      return res.status(400).json({
+        error: 'Message is required',
+        code: 'MISSING_MESSAGE'
+      });
+    }
+
+    if (!userData) {
+      return res.status(400).json({
+        error: 'User data is required for this endpoint',
+        code: 'MISSING_USER_DATA'
+      });
+    }
+
+    // Build context first
+    const context = ContextService.buildUserContext(userData);
+
+    // Then make the chat request internally
+    const chatRequest = {
+      message,
+      conversation,
+      context // Use pre-built context
+    };
+
+    // Forward to chat endpoint logic (reuse the same logic)
+    req.body = chatRequest;
+
+    // Redirect to chat endpoint
+    return res.redirect(307, '/api/chat');
+
+  } catch (error) {
+    console.error('Chat with Context API Error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      code: 'CHAT_CONTEXT_ERROR',
       message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
     });
   }
