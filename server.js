@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
+import ContextService from './services/contextService.js';
 
 // Load environment variables
 dotenv.config();
@@ -60,15 +61,16 @@ app.get('/', (req, res) => {
     status: 'running',
     endpoints: {
       health: '/health',
-      chat: '/api/chat'
+      chat: '/api/chat',
+      context: '/api/context'
     }
   });
 });
 
-// Chat endpoint with OpenAI integration
+// Chat endpoint with OpenAI integration and context limitations
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, conversation = [] } = req.body;
+    const { message, conversation = [], userData = null } = req.body;
 
     if (!message) {
       return res.status(400).json({
@@ -84,11 +86,40 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
+    // Build comprehensive user context using ContextService (similar to Dart version)
+    let systemContext;
+    if (userData && Object.keys(userData).length > 0) {
+      // User has provided data - build comprehensive context
+      systemContext = ContextService.buildUserContext(userData);
+    } else {
+      // No user data provided - use basic context with limitations
+      systemContext = `You are ModelDay AI, a helpful assistant for the ModelDay platform.
+
+IMPORTANT CONTEXT LIMITATIONS:
+- You currently have NO ACCESS to the user's personal modeling data (jobs, events, bookings, etc.)
+- You cannot provide specific insights about their career, earnings, or schedule
+- You cannot analyze their booking patterns, agent relationships, or financial data
+- You should NOT make up or assume any personal information about the user
+
+What you CAN help with:
+1. General modeling industry advice and guidance
+2. Portfolio creation tips and best practices
+3. Career development strategies in fashion and modeling
+4. Industry insights and trends
+5. Professional networking advice
+6. Casting preparation and audition tips
+7. General business advice for models
+
+If the user asks about their specific data, politely explain that you need access to their ModelDay account data to provide personalized insights. Suggest they ensure their data is properly synced or contact support if needed.
+
+Be professional, encouraging, and provide practical general advice while being transparent about your current limitations.`;
+    }
+
     // Prepare messages for OpenAI
     const messages = [
       {
         role: 'system',
-        content: `You are ModelDay AI, a helpful assistant for the ModelDay platform. You help users with modeling, portfolio creation, and career guidance in the fashion and modeling industry. Be professional, encouraging, and provide practical advice.`
+        content: systemContext
       },
       ...conversation.map(msg => ({
         role: msg.role || 'user',
@@ -122,7 +153,9 @@ app.post('/api/chat', async (req, res) => {
       response: aiResponse,
       usage: completion.usage,
       model: completion.model,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      hasUserData: userData && Object.keys(userData).length > 0,
+      contextLimited: !userData || Object.keys(userData).length === 0
     });
 
   } catch (error) {
@@ -153,6 +186,47 @@ app.post('/api/chat', async (req, res) => {
     res.status(500).json({
       error: 'Internal server error',
       code: 'INTERNAL_ERROR',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+    });
+  }
+});
+
+// Context building endpoint for testing and integration
+app.post('/api/context', async (req, res) => {
+  try {
+    const { userData } = req.body;
+
+    if (!userData) {
+      return res.status(400).json({
+        error: 'User data is required',
+        code: 'MISSING_USER_DATA'
+      });
+    }
+
+    // Build context using ContextService
+    const context = ContextService.buildUserContext(userData);
+
+    res.json({
+      success: true,
+      context: context,
+      timestamp: new Date().toISOString(),
+      dataStats: {
+        jobs: userData.jobs?.length || 0,
+        events: userData.events?.length || 0,
+        aiJobs: userData.aiJobs?.length || 0,
+        agencies: userData.agencies?.length || 0,
+        agents: userData.agents?.length || 0,
+        meetings: userData.meetings?.length || 0,
+        onStays: userData.onStays?.length || 0,
+        shootings: userData.shootings?.length || 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Context API Error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      code: 'CONTEXT_ERROR',
       message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
     });
   }
