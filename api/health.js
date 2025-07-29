@@ -9,12 +9,9 @@ export default function handler(req, res) {
   }
 
   res.status(200).json({
-    message: 'ModelDay Backend Server',
-    version: '1.0.0',
-    status: 'running',
-    endpoints: {
-      health: '/api/health',
-      chat: '/api/chat'
-    }
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development'
   });
 }
